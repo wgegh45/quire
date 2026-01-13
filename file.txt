@@ -1,0 +1,227 @@
+rarfile
+unrar
+
+方法1: パスワードエラーを無視してヘッダー情報だけ取得
+find . -type f \( -name "*.rar" -o -name "*.zip" \) -exec sh -c '
+  for file; do
+    echo "=== $file ===" >> archive_contents.txt
+    7z l -p- "$file" 2>&1 | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}|Name" >> archive_contents.txt
+    echo "" >> archive_contents.txt
+  done
+' sh {} +
+
+
+方法2: unrarコマンドでヘッダー情報を取得（推奨）
+find . -name "*.rar" -exec sh -c '
+  for file; do
+    echo "Archive: $file" >> rar_contents.txt
+    unrar lb "$file" 2>/dev/null >> rar_contents.txt
+    echo "---" >> rar_contents.txt
+  done
+' sh {} +
+
+find . -name "*.zip" -exec sh -c '
+  for file; do
+    echo "Archive: $file" >> zip_contents.txt
+    7z l -sccUTF-8 "$file" 2>/dev/null | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}" | awk "{print \$NF}" >> zip_contents.txt
+    echo "---" >> zip_contents.txt
+  done
+' sh {} +
+
+
+方法3
+import os
+import subprocess
+
+def list_archive_contents(output_file='archive_contents.txt'):
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith('.rar') or file.endswith('.zip'):
+                    path = os.path.join(root, file)
+                    f.write(f"=== {path} ===\n")
+                    
+                    try:
+                        if file.endswith('.rar'):
+                            # rarファイルの場合
+                            result = subprocess.run(
+                                ['unrar', 'lb', path],
+                                capture_output=True,
+                                text=True,
+                                encoding='utf-8',
+                                errors='replace'
+                            )
+                        else:
+                            # zipファイルの場合
+                            result = subprocess.run(
+                                ['7z', 'l', '-sccUTF-8', path],
+                                capture_output=True,
+                                text=True,
+                                encoding='utf-8',
+                                errors='replace'
+                            )
+                            # ファイル名行だけ抽出
+                            lines = result.stdout.split('\n')
+                            result.stdout = '\n'.join([line.split()[-1] for line in lines if line.strip() and line[0:4].isdigit()])
+                        
+                        f.write(result.stdout)
+                    except Exception as e:
+                        f.write(f"Error: {str(e)}\n")
+                    
+                    f.write("\n")
+
+if __name__ == '__main__':
+    list_archive_contents()
+    print("完了: archive_contents.txt に出力しました")
+
+
+方法4:unrarなしでも動作するPythonスクリプト
+import os
+import subprocess
+import zipfile
+import rarfile
+
+def list_archive_contents(output_file='archive_contents.txt'):
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith('.rar') or file.endswith('.zip'):
+                    path = os.path.join(root, file)
+                    f.write(f"=== {path} ===\n")
+                    
+                    try:
+                        if file.endswith('.rar'):
+                            # rarファイルの場合
+                            try:
+                                with rarfile.RarFile(path) as rf:
+                                    for name in rf.namelist():
+                                        f.write(f"{name}\n")
+                            except rarfile.RarCannotExec:
+                                # unrarがない場合、7zで試行
+                                result = subprocess.run(
+                                    ['7z', 'l', '-sccUTF-8', path],
+                                    capture_output=True,
+                                    text=True,
+                                    encoding='utf-8',
+                                    errors='replace'
+                                )
+                                lines = result.stdout.split('\n')
+                                for line in lines:
+                                    if line.strip() and len(line) > 53 and line[0:4].isdigit():
+                                        f.write(f"{line[53:].strip()}\n")
+                        else:
+                            # zipファイルの場合
+                            try:
+                                with zipfile.ZipFile(path, 'r') as zf:
+                                    for name in zf.namelist():
+                                        f.write(f"{name}\n")
+                            except:
+                                # zipfile失敗時は7zで試行
+                                result = subprocess.run(
+                                    ['7z', 'l', '-sccUTF-8', path],
+                                    capture_output=True,
+                                    text=True,
+                                    encoding='utf-8',
+                                    errors='replace'
+                                )
+                                lines = result.stdout.split('\n')
+                                for line in lines:
+                                    if line.strip() and len(line) > 53 and line[0:4].isdigit():
+                                        f.write(f"{line[53:].strip()}\n")
+                    except Exception as e:
+                        f.write(f"Error: {str(e)}\n")
+                    
+                    f.write("\n")
+
+if __name__ == '__main__':
+    list_archive_contents()
+    print("完了: archive_contents.txt に出力しました")
+
+
+
+方法5:Python 3.6対応版
+# -*- coding: utf-8 -*-
+import os
+import subprocess
+import zipfile
+
+try:
+    import rarfile
+    HAS_RARFILE = True
+except ImportError:
+    HAS_RARFILE = False
+
+def list_archive_contents(output_file='archive_contents.txt'):
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith('.rar') or file.endswith('.zip'):
+                    path = os.path.join(root, file)
+                    f.write('=== ' + path + ' ===\n')
+                    
+                    try:
+                        if file.endswith('.rar'):
+                            # rarファイルの場合
+                            if HAS_RARFILE:
+                                try:
+                                    rf = rarfile.RarFile(path)
+                                    for name in rf.namelist():
+                                        f.write(name + '\n')
+                                    rf.close()
+                                except Exception:
+                                    # rarfile失敗時は7zで試行
+                                    use_7z_for_rar(path, f)
+                            else:
+                                use_7z_for_rar(path, f)
+                        else:
+                            # zipファイルの場合
+                            try:
+                                zf = zipfile.ZipFile(path, 'r')
+                                for name in zf.namelist():
+                                    f.write(name + '\n')
+                                zf.close()
+                            except Exception:
+                                use_7z_for_zip(path, f)
+                    except Exception as e:
+                        f.write('Error: ' + str(e) + '\n')
+                    
+                    f.write('\n')
+
+def use_7z_for_rar(path, f):
+    result = subprocess.run(
+        ['7z', 'l', '-sccUTF-8', path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding='utf-8',
+        errors='replace'
+    )
+    lines = result.stdout.split('\n')
+    for line in lines:
+        if line.strip() and len(line) > 53:
+            try:
+                if line[0:4].isdigit():
+                    f.write(line[53:].strip() + '\n')
+            except Exception:
+                pass
+
+def use_7z_for_zip(path, f):
+    result = subprocess.run(
+        ['7z', 'l', '-sccUTF-8', path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding='utf-8',
+        errors='replace'
+    )
+    lines = result.stdout.split('\n')
+    for line in lines:
+        if line.strip() and len(line) > 53:
+            try:
+                if line[0:4].isdigit():
+                    f.write(line[53:].strip() + '\n')
+            except Exception:
+                pass
+
+if __name__ == '__main__':
+    list_archive_contents()
+    print('完了: archive_contents.txt に出力しました')
+
